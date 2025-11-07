@@ -1,12 +1,16 @@
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
-from transformers import pipeline
+from transformers import pipeline, AutoModelForCausalLM, AutoTokenizer
 import uvicorn
+import torch
 
 app = FastAPI()
 pipe = pipeline("text-generation", model="Qwen/Qwen2.5-0.5B-Instruct")
 pipe2 = pipeline("summarization", model="Falconsai/text_summarization")
+
+tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen2.5-0.5B-Instruct")
+model = AutoModelForCausalLM.from_pretrained("Qwen/Qwen2.5-0.5B-Instruct")
 
 class GenRequest(BaseModel):
     text: str
@@ -31,6 +35,25 @@ def summarize(req: GenRequest):
     )
     # print(out)
     return {"generated_text": out[0]["summary_text"]}
+
+@app.post("/generate_tokens")
+def gen_tokens(req: GenRequest):
+    inputs = tokenizer(req.text, return_tensors="pt")
+
+    with torch.no_grad():
+        out = model(**inputs)
+        logits = out.logits
+
+    outputs = ""
+    for i, token_id in enumerate(inputs["input_ids"][0]):  # [0] to get first batch item
+        for line in logits[:,i,:]:
+            top_logits,top_indices_logits = torch.topk(line, k = 5, dim= -1)
+            logit_list = tokenizer.decode(top_indices_logits)
+        decoded = tokenizer.decode([token_id])  # decode single token
+        outputs += f"Position\t{i}:\ttoken_id=\t{token_id.item():5d}\t→\t\t'{decoded}'\t\t{logit_list}\n"
+
+    return {"generated_text": outputs}
+
 
 @app.get("/", response_class=HTMLResponse)
 def index():
@@ -227,7 +250,7 @@ def index():
                 e.preventDefault();
                 
                 const text = document.getElementById('textInput').value;
-                const endpoint = toggle.checked ? '/summarize' : '/generate';
+                const endpoint = toggle.checked ? '/summarize' : '/generate_tokens';
                 
                 // Show loading state
                 submitBtn.disabled = true;
