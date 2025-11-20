@@ -45,12 +45,14 @@ def gen_tokens(req: GenRequest):
         logits = out.logits
 
     outputs = ""
+    output = []
     for i, token_id in enumerate(inputs["input_ids"][0]):  # [0] to get first batch item
         for line in logits[:,i,:]:
-            top_logits,top_indices_logits = torch.topk(line, k = 5, dim= -1)
+            _, top_indices_logits = torch.topk(line, k = 5, dim= -1)
             logit_list = tokenizer.decode(top_indices_logits)
         decoded = tokenizer.decode([token_id])  # decode single token
         outputs += f"Position\t{i}:\ttoken_id=\t{token_id.item():5d}\t→\t\t'{decoded}'\t\t{logit_list}\n"
+        output.append((decoded, logit_list))
 
     return {"generated_text": outputs}
 
@@ -292,4 +294,4 @@ def index():
     return html_content
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run("server:app", host="0.0.0.0", port=8000, reload=True)
