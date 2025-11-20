@@ -39,20 +39,46 @@ def summarize(req: GenRequest):
 @app.post("/generate_tokens")
 def gen_tokens(req: GenRequest):
     inputs = tokenizer(req.text, return_tensors="pt")
-
+    input_length = inputs["input_ids"].shape[1]
+    
+    # Generate new tokens
     with torch.no_grad():
-        out = model(**inputs)
-        logits = out.logits
-
-    outputs = ""
+        generated_ids = model.generate(
+            inputs["input_ids"],
+            max_new_tokens=req.max_new_tokens,
+            do_sample=req.do_sample,
+            output_scores=True,
+            return_dict_in_generate=True,
+            pad_token_id=tokenizer.eos_token_id
+        )
+    
+    # Get all token ids (input + generated)
+    all_token_ids = generated_ids.sequences[0]
+    
+    # Get logits for generated tokens
     output = []
-    for i, token_id in enumerate(inputs["input_ids"][0]):  # [0] to get first batch item
-        for line in logits[:,i,:]:
-            _, top_indices_logits = torch.topk(line, k = 5, dim= -1)
-            logit_list = tokenizer.decode(top_indices_logits)
-        decoded = tokenizer.decode([token_id])  # decode single token
-        outputs += f"Position\t{i}:\ttoken_id=\t{token_id.item():5d}\t→\t\t'{decoded}'\t\t{logit_list}\n"
+    
+    # Process input tokens
+    with torch.no_grad():
+        input_output = model(**inputs)
+        input_logits = input_output.logits
+    
+    for i, token_id in enumerate(inputs["input_ids"][0]):
+        logit_scores = input_logits[0, i, :]
+        _, top_indices = torch.topk(logit_scores, k=5, dim=-1)
+        logit_list = tokenizer.decode(top_indices)
+        decoded = tokenizer.decode([token_id])
         output.append((decoded, logit_list))
+    
+    # Process generated tokens
+    if hasattr(generated_ids, 'scores') and generated_ids.scores:
+        for i, scores in enumerate(generated_ids.scores):
+            token_id = all_token_ids[input_length + i]
+            logit_scores = scores[0]
+            _, top_indices = torch.topk(logit_scores, k=5, dim=-1)
+            logit_list = tokenizer.decode(top_indices)
+            decoded = tokenizer.decode([token_id])
+            output.append((decoded, logit_list))
 
     return {"output": output}
 
@@ -391,4 +417,4 @@ def index():
     return html_content
 
 if __name__ == "__main__":
-    uvicorn.run("server:app", host="0.0.0.0", port=8000, reload=True)
+    uvicorn.run("server:app", host="0.0.0.0", port=8000)
