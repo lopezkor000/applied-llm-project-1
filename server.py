@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
-from transformers import pipeline, AutoModelForCausalLM, AutoTokenizer
+from transformers import pipeline, AutoModelForCausalLM, AutoTokenizer, AutoModelForSeq2SeqLM
 import uvicorn
 import torch
 
@@ -11,6 +11,10 @@ pipe2 = pipeline("summarization", model="Falconsai/text_summarization")
 
 tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen2.5-0.5B-Instruct")
 model = AutoModelForCausalLM.from_pretrained("Qwen/Qwen2.5-0.5B-Instruct")
+
+# Load summarization model and tokenizer (T5 model)
+sum_tokenizer = AutoTokenizer.from_pretrained("Falconsai/text_summarization")
+sum_model = AutoModelForSeq2SeqLM.from_pretrained("Falconsai/text_summarization")
 
 class GenRequest(BaseModel):
     text: str
@@ -30,11 +34,36 @@ def generate(req: GenRequest):
 
 @app.post("/summarize")
 def summarize(req: GenRequest):
-    out = pipe2(
-        req.text
-    )
-    # print(out)
-    return {"generated_text": out[0]["summary_text"]}
+    inputs = sum_tokenizer(req.text, return_tensors="pt", truncation=True, max_length=512)
+    
+    # Generate summary tokens (T5 is encoder-decoder, so only generated tokens are returned)
+    with torch.no_grad():
+        generated_ids = sum_model.generate(
+            inputs["input_ids"],
+            max_new_tokens=req.max_new_tokens,
+            do_sample=req.do_sample,
+            output_scores=True,
+            return_dict_in_generate=True,
+            pad_token_id=sum_tokenizer.pad_token_id
+        )
+    
+    # Get generated token ids
+    all_token_ids = generated_ids.sequences[0]
+    
+    # Get logits for generated tokens
+    output = []
+    
+    # Process generated tokens (T5 doesn't output input tokens in generation)
+    if hasattr(generated_ids, 'scores') and generated_ids.scores:
+        for i, scores in enumerate(generated_ids.scores):
+            token_id = all_token_ids[i]
+            logit_scores = scores[0]
+            _, top_indices = torch.topk(logit_scores, k=5, dim=-1)
+            logit_list = sum_tokenizer.decode(top_indices)
+            decoded = sum_tokenizer.decode([token_id])
+            output.append((decoded, logit_list))
+
+    return {"output": output}
 
 @app.post("/generate_tokens")
 def gen_tokens(req: GenRequest):
@@ -381,7 +410,7 @@ def index():
                     
                     const data = await response.json();
                     
-                    if (endpoint === '/generate_tokens' && data.output) {
+                    if (data.output) {
                         // Display tokens with hover functionality
                         resultText.innerHTML = '';
                         const tokenContainer = document.createElement('div');
