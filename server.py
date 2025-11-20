@@ -54,7 +54,7 @@ def gen_tokens(req: GenRequest):
         outputs += f"Position\t{i}:\ttoken_id=\t{token_id.item():5d}\t→\t\t'{decoded}'\t\t{logit_list}\n"
         output.append((decoded, logit_list))
 
-    return {"generated_text": outputs}
+    return {"output": output}
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -181,6 +181,48 @@ def index():
                 white-space: pre-wrap;
                 word-wrap: break-word;
             }
+            .token-container {
+                display: inline-block;
+                line-height: 2;
+            }
+            .token {
+                display: inline-block;
+                padding: 2px 4px;
+                margin: 2px;
+                border-radius: 3px;
+                cursor: pointer;
+                transition: background-color 0.2s;
+            }
+            .token:hover {
+                background-color: #ffeb3b;
+            }
+            .logit-popup {
+                position: fixed;
+                background-color: white;
+                border: 2px solid #2196F3;
+                border-radius: 4px;
+                padding: 10px;
+                box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+                z-index: 1000;
+                display: none;
+                max-width: 300px;
+            }
+            .logit-popup.show {
+                display: block;
+            }
+            .logit-popup h4 {
+                margin: 0 0 8px 0;
+                color: #2196F3;
+                font-size: 14px;
+            }
+            .logit-popup ul {
+                margin: 0;
+                padding-left: 20px;
+                font-size: 13px;
+            }
+            .logit-popup li {
+                margin: 4px 0;
+            }
             .loading {
                 text-align: center;
                 color: #666;
@@ -223,6 +265,11 @@ def index():
                 <h3>Result:</h3>
                 <div class="result-text" id="resultText"></div>
             </div>
+            
+            <div class="logit-popup" id="logitPopup">
+                <h4>Next Predicted Tokens:</h4>
+                <ul id="logitList"></ul>
+            </div>
         </div>
         
         <script>
@@ -247,6 +294,36 @@ def index():
             
             toggle.addEventListener('change', updateLabels);
             updateLabels();
+            
+            const logitPopup = document.getElementById('logitPopup');
+            const logitList = document.getElementById('logitList');
+            
+            // Handle token hover events
+            document.addEventListener('mouseover', (e) => {
+                if (e.target.classList.contains('token')) {
+                    const logits = e.target.dataset.logits;
+                    
+                    // Parse and display logits
+                    logitList.innerHTML = '';
+                    const tokens = logits.split(' ').filter(t => t.length > 0);
+                    tokens.forEach(token => {
+                        const li = document.createElement('li');
+                        li.textContent = token;
+                        logitList.appendChild(li);
+                    });
+                    
+                    // Position popup near mouse
+                    logitPopup.style.left = (e.pageX + 15) + 'px';
+                    logitPopup.style.top = (e.pageY + 15) + 'px';
+                    logitPopup.classList.add('show');
+                }
+            });
+            
+            document.addEventListener('mouseout', (e) => {
+                if (e.target.classList.contains('token')) {
+                    logitPopup.classList.remove('show');
+                }
+            });
             
             form.addEventListener('submit', async (e) => {
                 e.preventDefault();
@@ -277,7 +354,27 @@ def index():
                     }
                     
                     const data = await response.json();
-                    resultText.textContent = data.generated_text;
+                    
+                    if (endpoint === '/generate_tokens' && data.output) {
+                        // Display tokens with hover functionality
+                        resultText.innerHTML = '';
+                        const tokenContainer = document.createElement('div');
+                        tokenContainer.className = 'token-container';
+                        
+                        data.output.forEach((item, index) => {
+                            const tokenSpan = document.createElement('span');
+                            tokenSpan.className = 'token';
+                            tokenSpan.textContent = item[0];
+                            tokenSpan.dataset.logits = item[1];
+                            tokenSpan.dataset.index = index;
+                            tokenContainer.appendChild(tokenSpan);
+                        });
+                        
+                        resultText.appendChild(tokenContainer);
+                    } else {
+                        resultText.textContent = data.generated_text;
+                    }
+                    
                     resultDiv.style.display = 'block';
                 } catch (error) {
                     resultText.textContent = 'Error: ' + error.message;
